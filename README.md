@@ -9,8 +9,17 @@ No more manual extraction, searching for binaries, or manually creating `.deskto
 - **🚀 One-Command Setup**: Point Spawn at a `.tar.gz` archive or a game folder, and it does the rest.
 - **🔍 Smart Discovery**: 
     - **Fuzzy Search**: Type partial names (e.g., `spawn toy`) and Spawn will find the matching file automatically.
+    - **Default Search Folder**: By default, Spawn searches your `~/Downloads` folder, so you don't even have to be in the same directory.
+    - **Customizable**: Set your own search directory with `spawn --set-search-dir <PATH>`.
     - **Executables**: Uses ELF header verification and common script detection (`start.sh`, `run.sh`) to find the real game binary.
     - **Icons**: Automatically finds and links game icons (`.png`, `.svg`, `.ico`).
+
+## Roadmap (v2)
+
+- [ ] **Dependency Doctor**: Suggest missing Linux libraries.
+- [ ] **Uninstaller**: Clean up game folders and shortcuts.
+- [ ] **Steam Integration**: Add as non-Steam shortcuts.
+- [ ] **Cover Art**: Auto-download icons/covers.
 - **📂 Robust Extraction**: Seamlessly handles nested directory structures inside archives.
 - **🛡️ Respectful & Safe**: 
     - **Permissions**: Adds execute bits without overwriting your existing filesystem permissions.
