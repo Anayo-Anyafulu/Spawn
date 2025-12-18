@@ -7,8 +7,11 @@ No more manual extraction, searching for binaries, or manually creating `.deskto
 ## Features
 
 - **🚀 One-Command Setup**: Point Spawn at a `.tar.gz` archive or a game folder, and it does the rest.
-- **Smart Extraction**: Automatically handles `.tar.gz`, `.tar.xz`, and `.tar.bz2` archives.
+- **Smart Extraction**: Automatically handles `.tar.gz`, `.tar.xz`, `.tar.bz2`, and `.zip` archives.
 - **Fuzzy Search**: Find games by typing partial names (e.g., `spawn toy`).
+- **Interactive**: 
+    - **Selection**: Choose between multiple matches.
+    - **Overwrite**: Prompts before overwriting existing installations.
 - **Configurable**: 
     - **Search**: Set your own search directory with `spawn --set-search-dir <PATH>`.
     - **Install**: Choose where to install games with `spawn --set-install-dir <PATH>`.
@@ -16,6 +19,8 @@ No more manual extraction, searching for binaries, or manually creating `.deskto
     - **Executables**: Uses ELF header verification and common script detection (`start.sh`, `run.sh`) to find the real game binary.
     - **Icons**: Automatically finds and links game icons (`.png`, `.svg`, `.ico`).
 - **✨ Smart Update Checker**: Automatically checks GitHub for new versions (offline-friendly) and notifies you when an update is available.
+- **🛡️ Dry Run**: Use `--dry-run` to see what Spawn will do without making any changes.
+- **🎨 Visual Polish**: Color-coded output and progress spinners for a premium terminal experience.
 
 ## Roadmap (v2)
 

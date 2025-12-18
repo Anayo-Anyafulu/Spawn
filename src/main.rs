@@ -1,9 +1,12 @@
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use colored::*;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
@@ -27,6 +30,10 @@ struct Args {
     /// Set the default install directory
     #[arg(long)]
     set_install_dir: Option<PathBuf>,
+
+    /// Show what would happen without making any changes
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -87,26 +94,30 @@ fn main() -> Result<()> {
         let abs_dir = new_dir.canonicalize().context("Failed to resolve new install directory")?;
         config.install_dir = abs_dir;
         save_config(&config)?;
-        println!("✔ Install directory updated to: {:?}", config.install_dir);
+        println!("{} Install directory updated to: {:?}", "✔".green(), config.install_dir);
         return Ok(());
     }
 
-    let input = args.path.ok_or_else(|| anyhow!("✖ No path provided\nHint: Use 'spawn <PATH>' or 'spawn <PARTIAL_NAME>'"))?;
+    let input = args.path.ok_or_else(|| anyhow!("{} No path provided\nHint: Use 'spawn <PATH>' or 'spawn <PARTIAL_NAME>'", "✖".red()))?;
 
-    println!("▶ Spawn v{}", env!("CARGO_PKG_VERSION"));
+    println!("{} {} v{}", "▶".cyan(), "Spawn".bold(), env!("CARGO_PKG_VERSION"));
+
+    if args.dry_run {
+        println!("{} Running in DRY RUN mode. No changes will be made.", "⚠".yellow().bold());
+    }
 
     let input_path = resolve_fuzzy_path(&input, &config.search_dir)?;
     let input_path = input_path.canonicalize().context("Failed to resolve input path")?;
 
     if !input_path.exists() {
-        return Err(anyhow!("✖ Path does not exist: {:?}\nHint: Ensure the path is correct and accessible", input_path));
+        return Err(anyhow!("{} Path does not exist: {:?}\nHint: Ensure the path is correct and accessible", "✖".red(), input_path));
     }
 
-    println!("▶ Installing game from: {:?}", input_path);
+    println!("{} Installing game from: {:?}", "▶".cyan(), input_path);
 
     let game_dir = if input_path.is_file() {
         // Ask for install location
-        println!("▶ Where should I install this? [Default: {:?}]", config.install_dir);
+        println!("{} Where should I install this? [Default: {:?}]", "▶".cyan(), config.install_dir);
         println!("  (Press Enter to use default, or type a new path)");
         
         let mut input_dir = String::new();
@@ -119,28 +130,38 @@ fn main() -> Result<()> {
             PathBuf::from(input_dir)
         };
 
-        if !target_parent.exists() {
+        if !args.dry_run && !target_parent.exists() {
             fs::create_dir_all(&target_parent).context("Failed to create install directory")?;
         }
 
-        extract_archive(&input_path, &target_parent)?
+        extract_archive(&input_path, &target_parent, args.dry_run)?
     } else {
         input_path
     };
 
-    let executable = discover_executable(&game_dir)?;
-    println!("✔ Discovered executable: {:?}", executable.file_name().unwrap_or_default());
-
-    set_executable_permission(&executable)?;
-    println!("✔ Fixed executable permissions");
-
-    let icon = if let Some(icon_path) = args.icon {
-        Some(icon_path)
+    let (executable, icon) = if args.dry_run && !game_dir.exists() {
+        println!("{} Would discover executable and icon inside the archive", "▶".cyan());
+        (PathBuf::from("would_be_executable"), None)
     } else {
-        discover_icon(&game_dir)
+        let executable = discover_executable(&game_dir)?;
+        println!("{} Discovered executable: {:?}", "✔".green(), executable.file_name().unwrap_or_default());
+
+        let icon = if let Some(icon_path) = args.icon {
+            Some(icon_path)
+        } else {
+            discover_icon(&game_dir)
+        };
+        if let Some(ref i) = icon {
+            println!("{} Found icon: {:?}", "✔".green(), i.file_name().unwrap_or_default());
+        }
+        (executable, icon)
     };
-    if let Some(ref i) = icon {
-        println!("✔ Found icon: {:?}", i.file_name().unwrap_or_default());
+
+    if !args.dry_run {
+        set_executable_permission(&executable)?;
+        println!("{} Fixed executable permissions", "✔".green());
+    } else if game_dir.exists() {
+        println!("{} Would fix executable permissions", "▶".cyan());
     }
 
     let game_name = args.name.as_deref().unwrap_or_else(|| {
@@ -149,23 +170,27 @@ fn main() -> Result<()> {
     // Replace underscores with spaces
     let game_name = game_name.replace('_', " ");
 
-    let desktop_files = generate_desktop_entry(&game_dir, &executable, &game_name, icon.as_deref())?;
-    for df in desktop_files {
-        println!("✔ Shortcut created: {:?}", df.file_name().unwrap_or_default());
+    if !args.dry_run {
+        let desktop_files = generate_desktop_entry(&game_dir, &executable, &game_name, icon.as_deref())?;
+        for df in desktop_files {
+            println!("{} Shortcut created: {:?}", "✔".green(), df.file_name().unwrap_or_default());
+        }
+    } else {
+        println!("{} Would create desktop shortcuts for {}", "▶".cyan(), game_name.bold());
     }
 
-    println!("\n🎮 {} is ready to play!", game_name);
+    println!("\n🎮 {} is ready to play!", game_name.bold().green());
 
     // Check for updates in the background (silently)
     if let Some(new_version) = check_for_updates() {
-        println!("\n✨ A new version of Spawn (v{}) is available!", new_version);
+        println!("\n✨ A new version of Spawn (v{}) is available!", new_version.bold().yellow());
         println!("   Run 'git pull' in your Spawn folder to update.");
     }
 
     Ok(())
 }
 
-fn extract_archive(archive_path: &Path, install_dir: &Path) -> Result<PathBuf> {
+fn extract_archive(archive_path: &Path, install_dir: &Path, dry_run: bool) -> Result<PathBuf> {
     let _file_name = archive_path.file_name().ok_or_else(|| anyhow!("Invalid archive path"))?;
     let _parent_dir = archive_path.parent().ok_or_else(|| anyhow!("No parent directory"))?;
     
@@ -173,7 +198,7 @@ fn extract_archive(archive_path: &Path, install_dir: &Path) -> Result<PathBuf> {
     let stem = archive_path.file_stem().ok_or_else(|| anyhow!("Invalid file name"))?;
     let stem_str = stem.to_string_lossy();
     
-    // Handle various tar extensions (.tar.gz, .tar.xz, .tar.bz2, etc.)
+    // Handle various tar extensions (.tar.gz, .tar.xz, .tar.bz2, etc.) and .zip
     let dir_name = if stem_str.ends_with(".tar") {
         Path::new(stem_str.as_ref()).file_stem().ok_or_else(|| anyhow!("Invalid tar archive name"))?
     } else {
@@ -182,35 +207,76 @@ fn extract_archive(archive_path: &Path, install_dir: &Path) -> Result<PathBuf> {
     
     let target_dir = install_dir.join(dir_name);
     if target_dir.exists() {
-        println!("✔ Using existing directory: {:?}", target_dir);
-        return Ok(flatten_if_needed(target_dir));
+        println!("{} {:?} is already installed.", "⚠".yellow().bold(), dir_name);
+        println!("  Do you want to overwrite it? [y/N]");
+        
+        let mut confirm = String::new();
+        std::io::stdin().read_line(&mut confirm).context("Failed to read input")?;
+        if confirm.trim().to_lowercase() != "y" {
+            println!("{} Using existing directory.", "✔".green());
+            return Ok(flatten_if_needed(target_dir));
+        }
+
+        if !dry_run {
+            fs::remove_dir_all(&target_dir).context("Failed to remove existing directory")?;
+        } else {
+            println!("{} Would remove existing directory", "▶".cyan());
+        }
     }
 
-    if !target_dir.exists() {
+    if !dry_run {
         fs::create_dir_all(&target_dir).context("Failed to create extraction directory")?;
     }
 
-    println!("▶ Extracting {:?} to {:?}", archive_path, target_dir);
+    if dry_run {
+        println!("{} Would extract {:?} to {:?}", "▶".cyan(), archive_path, target_dir);
+        return Ok(target_dir);
+    }
 
-    // Use -xf instead of -xzf to let tar auto-detect compression (gz, xz, bz2, etc.)
-    let status = Command::new("tar")
-        .arg("-xf")
-        .arg(archive_path)
-        .arg("-C")
-        .arg(&target_dir)
-        .status()
-        .context("Failed to execute tar command")?;
+    println!("{} Extracting {:?}...", "▶".cyan(), archive_path.file_name().unwrap_or_default());
+    
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::default_spinner()
+        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈")
+        .template("{spinner:.cyan} {msg}")?);
+    pb.set_message("Extracting files...");
+    pb.enable_steady_tick(Duration::from_millis(100));
+
+    let is_zip = archive_path.to_string_lossy().ends_with(".zip");
+    
+    let status = if is_zip {
+        Command::new("unzip")
+            .arg("-q") // quiet
+            .arg(archive_path)
+            .arg("-d")
+            .arg(&target_dir)
+            .status()
+            .context("Failed to execute unzip command. Hint: Ensure 'unzip' is installed.")?
+    } else {
+        // Use -xf instead of -xzf to let tar auto-detect compression (gz, xz, bz2, etc.)
+        Command::new("tar")
+            .arg("-xf")
+            .arg(archive_path)
+            .arg("-C")
+            .arg(&target_dir)
+            .status()
+            .context("Failed to execute tar command")?
+    };
+
+    pb.finish_and_clear();
 
     if !status.success() {
         let hint = if archive_path.to_string_lossy().ends_with(".xz") {
             "\nHint: This is a .xz archive. Ensure you have 'xz-utils' or 'xz' installed."
+        } else if is_zip {
+            "\nHint: Ensure 'unzip' is installed and the archive is valid."
         } else {
             "\nHint: Ensure tar is installed and the archive is valid."
         };
-        return Err(anyhow!("✖ Extraction failed (tar exit code: {:?}){}", status.code(), hint));
+        return Err(anyhow!("{} Extraction failed (exit code: {:?}){}", "✖".red(), status.code(), hint));
     }
 
-    println!("✔ Extracted game files");
+    println!("{} Extracted game files", "✔".green());
 
     Ok(flatten_if_needed(target_dir))
 }
@@ -341,34 +407,34 @@ fn resolve_fuzzy_path(input: &Path, search_dir: &Path) -> Result<PathBuf> {
     }
 
     match matches.len() {
-        0 => Err(anyhow!("✖ No file or directory found matching \"{}\" in {:?}", input.display(), search_dir)),
+        0 => Err(anyhow!("{} No file or directory found matching \"{}\" in {:?}", "✖".red(), input.display(), search_dir)),
         1 => {
             let matched = matches.remove(0);
-            println!("✔ Found matching path in {:?}: {:?}", search_dir.file_name().unwrap_or_default(), matched.file_name().unwrap_or_default());
+            println!("{} Found matching path in {:?}: {:?}", "✔".green(), search_dir.file_name().unwrap_or_default(), matched.file_name().unwrap_or_default());
             Ok(matched)
         }
         _ => {
-            println!("▶ Multiple matches found for \"{}\" in {:?}:", input.display(), search_dir);
+            println!("{} Multiple matches found for \"{}\" in {:?}:", "▶".cyan(), input.display(), search_dir);
             for (i, m) in matches.iter().enumerate() {
                 println!("  {}. {:?}", i + 1, m.file_name().unwrap_or_default());
             }
-            println!("▶ Please enter the number of the correct file (or press Enter to cancel):");
+            println!("{} Please enter the number of the correct file (or press Enter to cancel):", "▶".cyan());
 
             let mut choice = String::new();
             std::io::stdin().read_line(&mut choice).context("Failed to read input")?;
             let choice = choice.trim();
 
             if choice.is_empty() {
-                return Err(anyhow!("✖ Operation cancelled by user"));
+                return Err(anyhow!("{} Operation cancelled by user", "✖".red()));
             }
 
-            let index: usize = choice.parse::<usize>().map_err(|_| anyhow!("✖ Invalid selection"))?;
+            let index: usize = choice.parse::<usize>().map_err(|_| anyhow!("{} Invalid selection", "✖".red()))?;
             if index == 0 || index > matches.len() {
-                return Err(anyhow!("✖ Selection out of range"));
+                return Err(anyhow!("{} Selection out of range", "✖".red()));
             }
 
             let matched = matches.remove(index - 1);
-            println!("✔ Selected: {:?}", matched.file_name().unwrap_or_default());
+            println!("{} Selected: {:?}", "✔".green(), matched.file_name().unwrap_or_default());
             Ok(matched)
         }
     }
@@ -419,8 +485,6 @@ fn generate_desktop_entry(game_dir: &Path, executable: &Path, game_name: &str, i
 }
 
 fn check_for_updates() -> Option<String> {
-    use std::time::Duration;
-
     let url = "https://raw.githubusercontent.com/Anayo-Anyafulu/Spawn/master/Cargo.toml";
     
     // 1 second timeout to ensure it doesn't hang offline
