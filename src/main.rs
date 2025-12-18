@@ -23,17 +23,23 @@ struct Args {
     /// Set the default search directory
     #[arg(long)]
     set_search_dir: Option<PathBuf>,
+
+    /// Set the default install directory
+    #[arg(long)]
+    set_install_dir: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Config {
     search_dir: PathBuf,
+    install_dir: PathBuf,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             search_dir: dirs_next::download_dir().unwrap_or_else(|| PathBuf::from(".")),
+            install_dir: dirs_next::home_dir().map(|h| h.join("Games")).unwrap_or_else(|| PathBuf::from(".")),
         }
     }
 }
@@ -77,6 +83,14 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let Some(new_dir) = args.set_install_dir {
+        let abs_dir = new_dir.canonicalize().context("Failed to resolve new install directory")?;
+        config.install_dir = abs_dir;
+        save_config(&config)?;
+        println!("✔ Install directory updated to: {:?}", config.install_dir);
+        return Ok(());
+    }
+
     let input = args.path.ok_or_else(|| anyhow!("✖ No path provided\nHint: Use 'spawn <PATH>' or 'spawn <PARTIAL_NAME>'"))?;
 
     println!("▶ Spawn v{}", env!("CARGO_PKG_VERSION"));
@@ -91,7 +105,25 @@ fn main() -> Result<()> {
     println!("▶ Installing game from: {:?}", input_path);
 
     let game_dir = if input_path.is_file() {
-        extract_archive(&input_path)?
+        // Ask for install location
+        println!("▶ Where should I install this? [Default: {:?}]", config.install_dir);
+        println!("  (Press Enter to use default, or type a new path)");
+        
+        let mut input_dir = String::new();
+        std::io::stdin().read_line(&mut input_dir).context("Failed to read input")?;
+        let input_dir = input_dir.trim();
+        
+        let target_parent = if input_dir.is_empty() {
+            config.install_dir.clone()
+        } else {
+            PathBuf::from(input_dir)
+        };
+
+        if !target_parent.exists() {
+            fs::create_dir_all(&target_parent).context("Failed to create install directory")?;
+        }
+
+        extract_archive(&input_path, &target_parent)?
     } else {
         input_path
     };
@@ -114,18 +146,22 @@ fn main() -> Result<()> {
     let game_name = args.name.as_deref().unwrap_or_else(|| {
         game_dir.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown Game")
     });
+    // Replace underscores with spaces
+    let game_name = game_name.replace('_', " ");
 
-    let desktop_file = generate_desktop_entry(&game_dir, &executable, game_name, icon.as_deref())?;
-    println!("✔ Desktop shortcut created: {:?}", desktop_file.file_name().unwrap_or_default());
+    let desktop_files = generate_desktop_entry(&game_dir, &executable, &game_name, icon.as_deref())?;
+    for df in desktop_files {
+        println!("✔ Shortcut created: {:?}", df.file_name().unwrap_or_default());
+    }
 
     println!("\n🎮 {} is ready to play!", game_name);
 
     Ok(())
 }
 
-fn extract_archive(archive_path: &Path) -> Result<PathBuf> {
+fn extract_archive(archive_path: &Path, install_dir: &Path) -> Result<PathBuf> {
     let _file_name = archive_path.file_name().ok_or_else(|| anyhow!("Invalid archive path"))?;
-    let parent_dir = archive_path.parent().ok_or_else(|| anyhow!("No parent directory"))?;
+    let _parent_dir = archive_path.parent().ok_or_else(|| anyhow!("No parent directory"))?;
     
     // Create a directory for extraction if it's just a file
     let stem = archive_path.file_stem().ok_or_else(|| anyhow!("Invalid file name"))?;
@@ -136,7 +172,7 @@ fn extract_archive(archive_path: &Path) -> Result<PathBuf> {
         stem
     };
     
-    let target_dir = parent_dir.join(dir_name);
+    let target_dir = install_dir.join(dir_name);
     if target_dir.exists() {
         println!("✔ Using existing directory: {:?}", target_dir);
         return Ok(flatten_if_needed(target_dir));
@@ -303,7 +339,7 @@ fn resolve_fuzzy_path(input: &Path, search_dir: &Path) -> Result<PathBuf> {
     }
 }
 
-fn generate_desktop_entry(game_dir: &Path, executable: &Path, game_name: &str, icon: Option<&Path>) -> Result<PathBuf> {
+fn generate_desktop_entry(game_dir: &Path, executable: &Path, game_name: &str, icon: Option<&Path>) -> Result<Vec<PathBuf>> {
     let exec_path = executable.to_string_lossy();
     let working_dir = game_dir.to_string_lossy();
 
@@ -322,18 +358,27 @@ fn generate_desktop_entry(game_dir: &Path, executable: &Path, game_name: &str, i
         content.push_str(&format!("Icon={}\n", icon_path.to_string_lossy()));
     }
 
-    let desktop_dir = dirs_next::home_dir()
-        .map(|h| h.join(".local/share/applications"))
-        .ok_or_else(|| anyhow!("Could not find home directory"))?;
+    let mut created_files = Vec::new();
+    let desktop_file_name = format!("{}.desktop", game_name.to_lowercase().replace(' ', "-"));
 
-    if !desktop_dir.exists() {
-        fs::create_dir_all(&desktop_dir).context("Failed to create applications directory")?;
+    // 1. Applications Menu
+    if let Some(app_dir) = dirs_next::home_dir().map(|h| h.join(".local/share/applications")) {
+        if !app_dir.exists() {
+            fs::create_dir_all(&app_dir).context("Failed to create applications directory")?;
+        }
+        let app_path = app_dir.join(&desktop_file_name);
+        fs::write(&app_path, &content).context("Failed to write .desktop file to applications")?;
+        created_files.push(app_path);
     }
 
-    let desktop_file_name = format!("{}.desktop", game_name.to_lowercase().replace(' ', "-"));
-    let desktop_file_path = desktop_dir.join(desktop_file_name);
+    // 2. Desktop
+    if let Some(desktop_dir) = dirs_next::home_dir().map(|h| h.join("Desktop")) {
+        if desktop_dir.exists() {
+            let desktop_path = desktop_dir.join(&desktop_file_name);
+            fs::write(&desktop_path, &content).context("Failed to write .desktop file to Desktop")?;
+            created_files.push(desktop_path);
+        }
+    }
 
-    fs::write(&desktop_file_path, content).context("Failed to write .desktop file")?;
-
-    Ok(desktop_file_path)
+    Ok(created_files)
 }
