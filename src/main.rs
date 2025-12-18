@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -9,7 +10,7 @@ use walkdir::WalkDir;
 #[command(author, version, about = "Turns a Linux game archive into a runnable desktop application")]
 struct Args {
     /// Path to the game folder or .tar.gz archive
-    path: PathBuf,
+    path: Option<PathBuf>,
 
     /// Override the game name
     #[arg(short, long)]
@@ -18,14 +19,69 @@ struct Args {
     /// Path to a custom icon
     #[arg(short, long)]
     icon: Option<PathBuf>,
+
+    /// Set the default search directory
+    #[arg(long)]
+    set_search_dir: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Config {
+    search_dir: PathBuf,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            search_dir: dirs_next::download_dir().unwrap_or_else(|| PathBuf::from(".")),
+        }
+    }
+}
+
+fn get_config_path() -> Result<PathBuf> {
+    let config_dir = dirs_next::config_dir()
+        .ok_or_else(|| anyhow!("Could not find config directory"))?
+        .join("spawn");
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir)?;
+    }
+    Ok(config_dir.join("config.toml"))
+}
+
+fn load_config() -> Config {
+    let path = match get_config_path() {
+        Ok(p) => p,
+        Err(_) => return Config::default(),
+    };
+    
+    fs::read_to_string(path)
+        .and_then(|s| toml::from_str(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
+        .unwrap_or_else(|_| Config::default())
+}
+
+fn save_config(config: &Config) -> Result<()> {
+    let path = get_config_path()?;
+    let s = toml::to_string(config).map_err(|e| anyhow!("Failed to serialize config: {}", e))?;
+    fs::write(path, s).context("Failed to write config file")
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    
+    let mut config = load_config();
+
+    if let Some(new_dir) = args.set_search_dir {
+        let abs_dir = new_dir.canonicalize().context("Failed to resolve new search directory")?;
+        config.search_dir = abs_dir;
+        save_config(&config)?;
+        println!("✔ Search directory updated to: {:?}", config.search_dir);
+        return Ok(());
+    }
+
+    let input = args.path.ok_or_else(|| anyhow!("✖ No path provided\nHint: Use 'spawn <PATH>' or 'spawn <PARTIAL_NAME>'"))?;
+
     println!("▶ Spawn v{}", env!("CARGO_PKG_VERSION"));
 
-    let input_path = resolve_fuzzy_path(&args.path)?;
+    let input_path = resolve_fuzzy_path(&input, &config.search_dir)?;
     let input_path = input_path.canonicalize().context("Failed to resolve input path")?;
 
     if !input_path.exists() {
@@ -210,34 +266,34 @@ fn is_elf_binary(path: &Path) -> bool {
     buffer == [0x7F, 0x45, 0x4C, 0x46]
 }
 
-fn resolve_fuzzy_path(input: &Path) -> Result<PathBuf> {
+fn resolve_fuzzy_path(input: &Path, search_dir: &Path) -> Result<PathBuf> {
     if input.exists() {
         return Ok(input.to_path_buf());
     }
 
     let input_str = input.to_string_lossy().to_lowercase();
-    let current_dir = std::env::current_dir().context("Failed to get current directory")?;
     
     let mut matches = Vec::new();
-    for entry in fs::read_dir(current_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
-        
-        if file_name.contains(&input_str) {
-            matches.push(path);
+    if let Ok(entries) = fs::read_dir(search_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+            
+            if file_name.contains(&input_str) {
+                matches.push(path);
+            }
         }
     }
 
     match matches.len() {
-        0 => Err(anyhow!("✖ No file or directory found matching \"{}\"", input.display())),
+        0 => Err(anyhow!("✖ No file or directory found matching \"{}\" in {:?}", input.display(), search_dir)),
         1 => {
             let matched = matches.remove(0);
-            println!("✔ Found matching path: {:?}", matched.file_name().unwrap_or_default());
+            println!("✔ Found matching path in {:?}: {:?}", search_dir.file_name().unwrap_or_default(), matched.file_name().unwrap_or_default());
             Ok(matched)
         }
         _ => {
-            let mut msg = format!("✖ Multiple matches found for \"{}\":\n", input.display());
+            let mut msg = format!("✖ Multiple matches found for \"{}\" in {:?}:\n", input.display(), search_dir);
             for m in matches {
                 msg.push_str(&format!("  - {:?}\n", m.file_name().unwrap_or_default()));
             }

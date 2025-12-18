@@ -8,6 +8,7 @@ No more manual extraction, searching for binaries, or manually creating `.deskto
 
 - **🚀 One-Command Setup**: Point Spawn at a `.tar.gz` archive or a game folder, and it does the rest.
 - **🔍 Smart Discovery**: 
+    - **Fuzzy Search**: Type partial names (e.g., `spawn toy`) and Spawn will find the matching file automatically.
     - **Executables**: Uses ELF header verification and common script detection (`start.sh`, `run.sh`) to find the real game binary.
     - **Icons**: Automatically finds and links game icons (`.png`, `.svg`, `.ico`).
 - **📂 Robust Extraction**: Seamlessly handles nested directory structures inside archives.
