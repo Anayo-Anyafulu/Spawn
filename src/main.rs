@@ -25,7 +25,8 @@ fn main() -> Result<()> {
     
     println!("▶ Spawn v{}", env!("CARGO_PKG_VERSION"));
 
-    let input_path = args.path.canonicalize().context("Failed to resolve input path")?;
+    let input_path = resolve_fuzzy_path(&args.path)?;
+    let input_path = input_path.canonicalize().context("Failed to resolve input path")?;
 
     if !input_path.exists() {
         return Err(anyhow!("✖ Path does not exist: {:?}\nHint: Ensure the path is correct and accessible", input_path));
@@ -207,6 +208,43 @@ fn is_elf_binary(path: &Path) -> bool {
         return false;
     }
     buffer == [0x7F, 0x45, 0x4C, 0x46]
+}
+
+fn resolve_fuzzy_path(input: &Path) -> Result<PathBuf> {
+    if input.exists() {
+        return Ok(input.to_path_buf());
+    }
+
+    let input_str = input.to_string_lossy().to_lowercase();
+    let current_dir = std::env::current_dir().context("Failed to get current directory")?;
+    
+    let mut matches = Vec::new();
+    for entry in fs::read_dir(current_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+        
+        if file_name.contains(&input_str) {
+            matches.push(path);
+        }
+    }
+
+    match matches.len() {
+        0 => Err(anyhow!("✖ No file or directory found matching \"{}\"", input.display())),
+        1 => {
+            let matched = matches.remove(0);
+            println!("✔ Found matching path: {:?}", matched.file_name().unwrap_or_default());
+            Ok(matched)
+        }
+        _ => {
+            let mut msg = format!("✖ Multiple matches found for \"{}\":\n", input.display());
+            for m in matches {
+                msg.push_str(&format!("  - {:?}\n", m.file_name().unwrap_or_default()));
+            }
+            msg.push_str("Hint: Please be more specific");
+            Err(anyhow!(msg))
+        }
+    }
 }
 
 fn generate_desktop_entry(game_dir: &Path, executable: &Path, game_name: &str, icon: Option<&Path>) -> Result<PathBuf> {
