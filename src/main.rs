@@ -329,6 +329,11 @@ fn resolve_fuzzy_path(input: &Path, search_dir: &Path) -> Result<PathBuf> {
             let path = entry.path();
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
             
+            // Filter out common temporary/meta files
+            if file_name.ends_with(".aria2") || file_name.ends_with(".part") || file_name.ends_with(".tmp") {
+                continue;
+            }
+
             if file_name.contains(&input_str) {
                 matches.push(path);
             }
@@ -343,12 +348,28 @@ fn resolve_fuzzy_path(input: &Path, search_dir: &Path) -> Result<PathBuf> {
             Ok(matched)
         }
         _ => {
-            let mut msg = format!("✖ Multiple matches found for \"{}\" in {:?}:\n", input.display(), search_dir);
-            for m in matches {
-                msg.push_str(&format!("  - {:?}\n", m.file_name().unwrap_or_default()));
+            println!("▶ Multiple matches found for \"{}\" in {:?}:", input.display(), search_dir);
+            for (i, m) in matches.iter().enumerate() {
+                println!("  {}. {:?}", i + 1, m.file_name().unwrap_or_default());
             }
-            msg.push_str("Hint: Please be more specific");
-            Err(anyhow!(msg))
+            println!("▶ Please enter the number of the correct file (or press Enter to cancel):");
+
+            let mut choice = String::new();
+            std::io::stdin().read_line(&mut choice).context("Failed to read input")?;
+            let choice = choice.trim();
+
+            if choice.is_empty() {
+                return Err(anyhow!("✖ Operation cancelled by user"));
+            }
+
+            let index: usize = choice.parse::<usize>().map_err(|_| anyhow!("✖ Invalid selection"))?;
+            if index == 0 || index > matches.len() {
+                return Err(anyhow!("✖ Selection out of range"));
+            }
+
+            let matched = matches.remove(index - 1);
+            println!("✔ Selected: {:?}", matched.file_name().unwrap_or_default());
+            Ok(matched)
         }
     }
 }
