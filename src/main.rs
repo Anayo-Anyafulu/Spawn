@@ -156,6 +156,12 @@ fn main() -> Result<()> {
 
     println!("\n🎮 {} is ready to play!", game_name);
 
+    // Check for updates in the background (silently)
+    if let Some(new_version) = check_for_updates() {
+        println!("\n✨ A new version of Spawn (v{}) is available!", new_version);
+        println!("   Run 'git pull' in your Spawn folder to update.");
+    }
+
     Ok(())
 }
 
@@ -381,4 +387,37 @@ fn generate_desktop_entry(game_dir: &Path, executable: &Path, game_name: &str, i
     }
 
     Ok(created_files)
+}
+
+fn check_for_updates() -> Option<String> {
+    use std::time::Duration;
+
+    let url = "https://raw.githubusercontent.com/Anayo-Anyafulu/Spawn/master/Cargo.toml";
+    
+    // 1 second timeout to ensure it doesn't hang offline
+    let agent = ureq::AgentBuilder::new()
+        .timeout_read(Duration::from_secs(1))
+        .timeout_connect(Duration::from_secs(1))
+        .build();
+
+    let response = match agent.get(url).call() {
+        Ok(r) => r,
+        Err(_) => {
+            return None;
+        }
+    };
+    let body = response.into_string().ok()?;
+
+    // Simple parsing of version = "x.y.z"
+    for line in body.lines() {
+        if line.trim().starts_with("version =") {
+            let version = line.split('"').nth(1)?;
+            if version != env!("CARGO_PKG_VERSION") {
+                return Some(version.to_string());
+            }
+            break;
+        }
+    }
+
+    None
 }
