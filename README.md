@@ -13,6 +13,7 @@ No more manual extraction, searching for binaries, or manually creating `.deskto
     - **Customizable**: Set your own search directory with `spawn --set-search-dir <PATH>`.
     - **Executables**: Uses ELF header verification and common script detection (`start.sh`, `run.sh`) to find the real game binary.
     - **Icons**: Automatically finds and links game icons (`.png`, `.svg`, `.ico`).
+- **✨ Smart Update Checker**: Automatically checks GitHub for new versions (offline-friendly) and notifies you when an update is available.
 
 ## Roadmap (v2)
 
