@@ -171,9 +171,11 @@ fn extract_archive(archive_path: &Path, install_dir: &Path) -> Result<PathBuf> {
     
     // Create a directory for extraction if it's just a file
     let stem = archive_path.file_stem().ok_or_else(|| anyhow!("Invalid file name"))?;
-    // Handle .tar.gz double extension
-    let dir_name = if stem.to_string_lossy().ends_with(".tar") {
-        Path::new(stem).file_stem().ok_or_else(|| anyhow!("Invalid tar.gz name"))?
+    let stem_str = stem.to_string_lossy();
+    
+    // Handle various tar extensions (.tar.gz, .tar.xz, .tar.bz2, etc.)
+    let dir_name = if stem_str.ends_with(".tar") {
+        Path::new(stem_str.as_ref()).file_stem().ok_or_else(|| anyhow!("Invalid tar archive name"))?
     } else {
         stem
     };
@@ -190,8 +192,9 @@ fn extract_archive(archive_path: &Path, install_dir: &Path) -> Result<PathBuf> {
 
     println!("▶ Extracting {:?} to {:?}", archive_path, target_dir);
 
+    // Use -xf instead of -xzf to let tar auto-detect compression (gz, xz, bz2, etc.)
     let status = Command::new("tar")
-        .arg("-xzf")
+        .arg("-xf")
         .arg(archive_path)
         .arg("-C")
         .arg(&target_dir)
@@ -199,7 +202,12 @@ fn extract_archive(archive_path: &Path, install_dir: &Path) -> Result<PathBuf> {
         .context("Failed to execute tar command")?;
 
     if !status.success() {
-        return Err(anyhow!("tar command failed with status: {:?}\nHint: Ensure tar is installed and the archive is valid", status));
+        let hint = if archive_path.to_string_lossy().ends_with(".xz") {
+            "\nHint: This is a .xz archive. Ensure you have 'xz-utils' or 'xz' installed."
+        } else {
+            "\nHint: Ensure tar is installed and the archive is valid."
+        };
+        return Err(anyhow!("✖ Extraction failed (tar exit code: {:?}){}", status.code(), hint));
     }
 
     println!("✔ Extracted game files");
