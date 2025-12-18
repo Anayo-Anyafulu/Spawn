@@ -167,8 +167,7 @@ fn main() -> Result<()> {
     let game_name = args.name.as_deref().unwrap_or_else(|| {
         game_dir.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown Game")
     });
-    // Replace underscores with spaces
-    let game_name = game_name.replace('_', " ");
+    let game_name = format_game_name(&game_name);
 
     if !args.dry_run {
         let desktop_files = generate_desktop_entry(&game_dir, &executable, &game_name, icon.as_deref())?;
@@ -294,6 +293,20 @@ fn flatten_if_needed(dir: PathBuf) -> PathBuf {
     } else {
         dir
     }
+}
+
+fn format_game_name(name: &str) -> String {
+    name.replace('_', " ")
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str().to_lowercase().as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn discover_executable(game_dir: &Path) -> Result<PathBuf> {
