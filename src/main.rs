@@ -34,6 +34,10 @@ struct Args {
     /// Show what would happen without making any changes
     #[arg(long)]
     dry_run: bool,
+
+    /// Update Spawn to the latest version from GitHub
+    #[arg(long)]
+    update: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -98,6 +102,10 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if args.update {
+        return update_spawn();
+    }
+
     let input = args.path.ok_or_else(|| anyhow!("{} No path provided\nHint: Use 'spawn <PATH>' or 'spawn <PARTIAL_NAME>'", "✖".red()))?;
 
     println!("{} {} v{}", "▶".cyan(), "Spawn".bold(), env!("CARGO_PKG_VERSION"));
@@ -134,7 +142,11 @@ fn main() -> Result<()> {
             fs::create_dir_all(&target_parent).context("Failed to create install directory")?;
         }
 
-        extract_archive(&input_path, &target_parent, args.dry_run)?
+        if input_path.to_string_lossy().ends_with(".AppImage") {
+            install_appimage(&input_path, &target_parent, args.dry_run)?
+        } else {
+            extract_archive(&input_path, &target_parent, args.dry_run)?
+        }
     } else {
         input_path
     };
@@ -318,8 +330,8 @@ fn discover_executable(game_dir: &Path) -> Result<PathBuf> {
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             
             // Heuristics:
-            // 1. Common launcher scripts in root
-            if path.parent() == Some(game_dir) && (file_name == "start.sh" || file_name == "run.sh" || file_name == "launcher.sh") {
+            // 1. Common launcher scripts in root or AppImage
+            if path.parent() == Some(game_dir) && (file_name == "start.sh" || file_name == "run.sh" || file_name == "launcher.sh" || file_name.ends_with(".AppImage")) {
                 return Ok(path.to_path_buf());
             }
 
@@ -526,4 +538,70 @@ fn check_for_updates() -> Option<String> {
     }
 
     None
+}
+
+fn update_spawn() -> Result<()> {
+    println!("{} Updating Spawn...", "▶".cyan());
+
+    // 1. git pull
+    println!("{} Pulling latest changes from GitHub...", "▶".cyan());
+    let status = Command::new("git")
+        .arg("pull")
+        .status()
+        .context("Failed to execute git pull. Hint: Ensure you are in a git repository.")?;
+
+    if !status.success() {
+        return Err(anyhow!("{} git pull failed", "✖".red()));
+    }
+
+    // 2. cargo install --path .
+    println!("{} Re-installing Spawn...", "▶".cyan());
+    let status = Command::new("cargo")
+        .arg("install")
+        .arg("--path")
+        .arg(".")
+        .status()
+        .context("Failed to execute cargo install")?;
+
+    if !status.success() {
+        return Err(anyhow!("{} cargo install failed", "✖".red()));
+    }
+
+    println!("{} Spawn has been updated successfully!", "✔".green().bold());
+    Ok(())
+}
+
+fn install_appimage(appimage_path: &Path, install_dir: &Path, dry_run: bool) -> Result<PathBuf> {
+    let file_name = appimage_path.file_name().ok_or_else(|| anyhow!("Invalid AppImage path"))?;
+    let stem = appimage_path.file_stem().ok_or_else(|| anyhow!("Invalid file name"))?;
+    
+    let target_dir = install_dir.join(stem);
+    if target_dir.exists() {
+        println!("{} {:?} is already installed.", "⚠".yellow().bold(), stem);
+        println!("  Do you want to overwrite it? [y/N]");
+        
+        let mut confirm = String::new();
+        std::io::stdin().read_line(&mut confirm).context("Failed to read input")?;
+        if confirm.trim().to_lowercase() != "y" {
+            println!("{} Using existing directory.", "✔".green());
+            return Ok(target_dir);
+        }
+
+        if !dry_run {
+            fs::remove_dir_all(&target_dir).context("Failed to remove existing directory")?;
+        }
+    }
+
+    if dry_run {
+        println!("{} Would move {:?} to {:?}", "▶".cyan(), appimage_path, target_dir);
+        return Ok(target_dir);
+    }
+
+    fs::create_dir_all(&target_dir).context("Failed to create install directory")?;
+    let target_path = target_dir.join(file_name);
+    fs::copy(appimage_path, &target_path).context("Failed to copy AppImage")?;
+    
+    println!("{} Installed AppImage to {:?}", "✔".green(), target_path);
+    
+    Ok(target_dir)
 }
