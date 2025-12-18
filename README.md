@@ -26,12 +26,14 @@ spawn ./my-game-archive.tar.gz
 spawn ./game-folder --name "My Awesome Game" --icon ./custom-logo.png
 ```
 
+## Why Spawn?
+
+Linux gaming often involves downloading standalone archives (like from "Linux Gaming" websites) that require manual setup. **Spawn** was created to solve this exact frustration.
+
+Instead of manually extracting files, hunting for binaries, and writing `.desktop` files from scratch, Spawn automates the entire process. It makes setting up new games **80% faster**—you just run the script, and the game is ready in your launcher.
+
 ## Installation
 
 ```bash
 cargo install --path .
 ```
-
-## Why Spawn?
-
-Linux gaming often involves downloading standalone archives that require manual setup. Spawn automates this workflow, ensuring your games are correctly extracted, permissions are set, and they appear in your application launcher just like any other app.
