@@ -27,17 +27,20 @@ spawn ./my-game-archive.tar.gz
 - **🎩 Title Case Magic**: Automatically converts ugly filenames like `annana_nene` into beautiful shortcut names like **Annana Nene**.
 - **🧠 Intelligent Detection**:
     - **Executables**: Uses ELF header verification to find the real game binary, even if it's buried in subfolders.
+    - **Engine Support**: Specialized heuristics for **Godot** and **Unity** games to ensure the correct binary is picked.
     - **Icons**: Automatically finds and links the best game icon (`.png`, `.svg`, `.ico`).
 - **🤝 Interactive & Safe**:
     - **Selection**: If multiple matches are found, you get to pick.
     - **Overwrite**: Prompts you before touching any existing installations.
     - **Dry Run**: Use `--dry-run` to see what Spawn *would* do without making changes.
 - **🎨 Visual Polish**: Color-coded output and smooth progress spinners for a premium terminal experience.
-- **🗑️ Clean Uninstall**: Run `spawn --uninstall "Game Name"` to remove the game and all its shortcuts.
-- **🎮 Steam Integration**: Use the `--steam` flag to automatically add your game to the Steam library as a Non-Steam game.
+- **🗑️ Clean Uninstall**: Run `spawn --uninstall "Game Name"` to remove the game and all its shortcuts. Supports **fuzzy matching** for easy cleanup.
+- **🎮 Steam Integration**: 
+    - Use the `--steam` flag during installation to add a new game to Steam.
+    - Run `spawn --steam "Game Name"` to add an **already installed** game to your Steam library.
 - **🔄 Always Fresh**: 
     - **Update Checker**: Notifies you when a new version is available on GitHub.
-    - **Self-Update**: Run `spawn --update` to pull and install the latest version automatically.
+    - **Self-Update**: Run `spawn --update` from anywhere to pull and install the latest version automatically.
 
 ---
 
@@ -51,6 +54,9 @@ spawn --set-search-dir ~/Games/Downloads
 
 # Change where games are installed (default: ~/Games)
 spawn --set-install-dir ~/Storage/Games
+
+# Tip: Run these commands without a path to see your current settings!
+spawn --set-install-dir
 ```
 
 ---
@@ -82,4 +88,5 @@ I wanted a way to just "open the file and play." Spawn automates that entire wor
 - [ ] **Dependency Doctor**: Automatically suggest missing Linux libraries.
 - [x] **Uninstaller**: One command to clean up game folders and shortcuts.
 - [x] **Steam Integration**: Add games as non-Steam shortcuts automatically.
+- [x] **Engine Support**: Specialized detection for Godot and Unity.
 - [ ] **Cover Art**: Auto-download high-quality icons and covers.
