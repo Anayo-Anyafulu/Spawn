@@ -3,6 +3,10 @@ mod discovery;
 mod installation;
 mod utils;
 mod steam;
+mod game_type;
+mod proton;
+mod windows;
+mod archive;
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -14,14 +18,17 @@ use std::fs;
 
 use crate::config::{load_config, save_config};
 use crate::discovery::{discover_executable, discover_icon};
-use crate::installation::{extract_archive, install_appimage};
+use crate::installation::install_appimage;
 use crate::steam::add_to_steam;
 use crate::utils::{format_game_name, generate_desktop_entry, resolve_fuzzy_path, set_executable_permission};
+use crate::game_type::{detect_game_type, GameType};
+use crate::archive::extract_archive_unified;
+use crate::windows::{install_windows_game, setup_portable_windows_game};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Turns a Linux game archive into a runnable desktop application")]
+#[command(author, version, about = "Linux CLI for installing and integrating non-Steam games")]
 struct Args {
-    /// Path to the game folder or .tar.gz archive
+    /// Path to the game folder, archive, or installer
     path: Option<PathBuf>,
 
     /// Override the game name
@@ -52,9 +59,13 @@ struct Args {
     #[arg(long)]
     uninstall: Option<String>,
 
-    /// Add the game to Steam as a Non-Steam Game (Experimental)
+    /// Add the game to Steam as a Non-Steam Game
     #[arg(long)]
     steam: bool,
+
+    /// Auto mode - no prompts, use safe defaults
+    #[arg(long)]
+    auto: bool,
 }
 
 fn main() -> Result<()> {
@@ -85,101 +96,143 @@ fn main() -> Result<()> {
         return uninstall_game(&game_to_uninstall, &config.install_dir, args.dry_run);
     }
 
-    let input = args.path.ok_or_else(|| anyhow!("{} No path provided\nHint: Use 'spawn <PATH>' or 'spawn <PARTIAL_NAME>'", "✖".red()))?;
+    let input = args.path.ok_or_else(|| anyhow!("{} No path provided\\nHint: Use 'spawn add <PATH>'", "✖".red()))?;
 
-    println!("{} {} v{}", "▶".cyan(), "Spawn".bold(), env!("CARGO_PKG_VERSION"));
+    println!("\n{} {} v{}\n", "🎮".bold(), "Spawn".bold().cyan(), env!("CARGO_PKG_VERSION"));
 
     if args.dry_run {
-        println!("{} Running in DRY RUN mode. No changes will be made.", "⚠".yellow().bold());
+        println!("{} Running in DRY RUN mode. No changes will be made.\n", "⚠".yellow().bold());
     }
 
     let input_path = resolve_fuzzy_path(&input, &config.search_dir)?;
     let input_path = input_path.canonicalize().context("Failed to resolve input path")?;
 
     if !input_path.exists() {
-        return Err(anyhow!("{} Path does not exist: {:?}\nHint: Ensure the path is correct and accessible", "✖".red(), input_path));
+        return Err(anyhow!("{} Path does not exist: {:?}", "✖".red(), input_path));
     }
 
-    println!("{} Installing game from: {:?}", "▶".cyan(), input_path);
+    // Detect game type
+    let game_info = detect_game_type(&input_path)?;
+    
+    let game_name = args.name.as_deref()
+        .unwrap_or(&game_info.name)
+        .to_string();
+    let game_name = format_game_name(&game_name);
 
-    let game_dir = if input_path.is_file() {
-        println!("{} Where should I install this? [Default: {:?}]", "▶".cyan(), config.install_dir);
-        println!("  (Press Enter to use default, or type a new path)");
+    println!("\n{} Processing: {}\n", "▶".cyan(), game_name.bold());
+
+    // Create install directory if needed
+    if !args.dry_run && !config.install_dir.exists() {
+        fs::create_dir_all(&config.install_dir)
+            .context("Failed to create install directory")?;
+    }
+
+    // Handle based on game type
+    let (executable, game_dir, needs_proton) = match game_info.game_type {
+        GameType::WindowsInstaller => {
+            if args.dry_run {
+                println!("{} Would install Windows game with Proton", "▶".cyan());
+                (PathBuf::from("would_be_exe"), config.install_dir.clone(), true)
+            } else {
+                let exe = install_windows_game(&input_path, &config.install_dir, &game_name)?;
+                let dir = exe.parent().unwrap().to_path_buf();
+                (exe, dir, true)
+            }
+        },
         
-        let mut input_dir = String::new();
-        std::io::stdin().read_line(&mut input_dir).context("Failed to read input")?;
-        let input_dir = input_dir.trim();
+        GameType::LinuxArchive => {
+            let target_dir = config.install_dir.join(&game_name.replace(' ', "_"));
+            
+            if !args.dry_run {
+                fs::create_dir_all(&target_dir)?;
+                
+                if input_path.to_string_lossy().ends_with(".AppImage") {
+                    install_appimage(&input_path, &config.install_dir, args.dry_run)?;
+                } else {
+                    extract_archive_unified(&input_path, &target_dir)?;
+                }
+            } else {
+                println!("{} Would extract archive to {:?}", "▶".cyan(), target_dir);
+            }
+            
+            let executable = if !args.dry_run {
+                discover_executable(&target_dir)?
+            } else {
+                PathBuf::from("would_be_executable")
+            };
+            
+            (executable, target_dir, false)
+        },
         
-        let target_parent = if input_dir.is_empty() {
-            config.install_dir.clone()
-        } else {
-            PathBuf::from(input_dir)
-        };
-
-        if !args.dry_run && !target_parent.exists() {
-            fs::create_dir_all(&target_parent).context("Failed to create install directory")?;
-        }
-
-        if input_path.to_string_lossy().ends_with(".AppImage") {
-            install_appimage(&input_path, &target_parent, args.dry_run)?
-        } else {
-            extract_archive(&input_path, &target_parent, args.dry_run)?
-        }
-    } else {
-        input_path
-    };
-
-    let (executable, icon) = if args.dry_run && !game_dir.exists() {
-        println!("{} Would discover executable and icon inside the archive", "▶".cyan());
-        (PathBuf::from("would_be_executable"), None)
-    } else {
-        let executable = discover_executable(&game_dir)?;
-        println!("{} Discovered executable: {:?}", "✔".green(), executable.file_name().unwrap_or_default());
-
-        let icon = if let Some(icon_path) = args.icon {
-            Some(icon_path)
-        } else {
-            discover_icon(&game_dir)
-        };
-        if let Some(ref i) = icon {
-            let name = i.file_name().unwrap_or_else(|| std::ffi::OsStr::new(""));
-            println!("{} Found icon: {:?}", "✔".green(), name);
-        }
-        (executable, icon)
+        GameType::PortableLinux => {
+            let executable = discover_executable(&input_path)?;
+            (executable, input_path.clone(), false)
+        },
+        
+        GameType::PortableWindows => {
+            if args.dry_run {
+                println!("{} Would setup portable Windows game with Proton", "▶".cyan());
+                (PathBuf::from("would_be_exe"), input_path.clone(), true)
+            } else {
+                let exe = setup_portable_windows_game(&input_path)?;
+                (exe, input_path.clone(), true)
+            }
+        },
     };
 
     if !args.dry_run {
-        set_executable_permission(&executable)?;
-        println!("{} Fixed executable permissions", "✔".green());
-    } else if game_dir.exists() {
-        println!("{} Would fix executable permissions", "▶".cyan());
+        println!("{} Executable: {:?}", "✔".green(), executable.file_name().unwrap_or_default());
     }
 
-    let game_name = args.name.as_deref().unwrap_or_else(|| {
-        game_dir.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown Game")
-    });
-    let game_name = format_game_name(&game_name);
+    // Set executable permissions (for Linux binaries)
+    if !needs_proton && !args.dry_run {
+        set_executable_permission(&executable)?;
+        println!("{} Fixed executable permissions", "✔".green());
+    }
 
+    // Find icon
+    let icon = if let Some(icon_path) = args.icon {
+        Some(icon_path)
+    } else if !args.dry_run {
+        discover_icon(&game_dir)
+    } else {
+        None
+    };
+
+    if let Some(ref i) = icon {
+        println!("{} Icon: {:?}", "✔".green(), i.file_name().unwrap());
+    }
+
+    // Generate desktop shortcuts
     if !args.dry_run {
         let desktop_files = generate_desktop_entry(&game_dir, &executable, &game_name, icon.as_deref())?;
         for df in desktop_files {
-            println!("{} Shortcut created: {:?}", "✔".green(), df.file_name().unwrap_or_default());
+            println!("{} Shortcut: {:?}", "✔".green(), df.file_name().unwrap_or_default());
         }
     } else {
-        println!("{} Would create desktop shortcuts for {}", "▶".cyan(), game_name.bold());
+        println!("{} Would create desktop shortcuts", "▶".cyan());
     }
 
+    // Add to Steam
     if args.steam {
-        if let Err(e) = add_to_steam(&game_name, &executable, icon.as_deref()) {
-            println!("{} Failed to add to Steam: {:?}", "⚠".yellow(), e);
+        if args.dry_run {
+            println!("{} Would add to Steam", "▶".cyan());
+        } else {
+            match add_to_steam(&game_name, &executable, icon.as_deref(), needs_proton) {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("{} Failed to add to Steam: {}", "⚠".yellow(), e);
+                    println!("  (The game is still installed and can be launched normally)");
+                }
+            }
         }
     }
 
-    println!("\n🎮 {} is ready to play!", game_name.bold().green());
+    println!("\n{} {} is ready to play! {}\n", "🎮".bold(), game_name.bold().green(), "✨".bold());
 
     if let Some(new_version) = check_for_updates() {
-        println!("\n✨ A new version of Spawn (v{}) is available!", new_version.bold().yellow());
-        println!("   Run 'spawn --update' to update.");
+        println!("✨ A new version of Spawn (v{}) is available!", new_version.bold().yellow());
+        println!("   Run 'spawn --update' to update.\n");
     }
 
     Ok(())

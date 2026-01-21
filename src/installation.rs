@@ -6,6 +6,7 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use colored::*;
 
+#[allow(dead_code)]
 pub fn extract_archive(archive_path: &Path, install_dir: &Path, dry_run: bool) -> Result<PathBuf> {
     let stem = archive_path.file_stem().ok_or_else(|| anyhow!("Invalid file name"))?;
     let stem_str = stem.to_string_lossy();
@@ -126,6 +127,7 @@ pub fn install_appimage(appimage_path: &Path, install_dir: &Path, dry_run: bool)
     Ok(target_dir)
 }
 
+#[allow(dead_code)]
 fn flatten_if_needed(dir: PathBuf) -> PathBuf {
     let entries = match fs::read_dir(&dir) {
         Ok(e) => e.filter_map(|e| e.ok()).collect::<Vec<_>>(),

@@ -3,8 +3,12 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use steam_shortcuts_util::{parse_shortcuts, shortcuts_to_bytes, Shortcut};
 use colored::Colorize;
+use sysinfo::System;
 
-pub fn add_to_steam(game_name: &str, executable: &Path, icon: Option<&Path>) -> Result<()> {
+pub fn add_to_steam(game_name: &str, executable: &Path, icon: Option<&Path>, enable_proton: bool) -> Result<()> {
+    // Check if Steam is running
+    check_steam_running()?;
+    
     let shortcuts_path = find_shortcuts_vdf()?;
     println!("{} Found Steam shortcuts at: {:?}", "▶".cyan(), shortcuts_path);
 
@@ -18,13 +22,20 @@ pub fn add_to_steam(game_name: &str, executable: &Path, icon: Option<&Path>) -> 
         return Ok(());
     }
 
+    // Set launch options for Proton if needed
+    let launch_options = if enable_proton {
+        "STEAM_COMPAT_DATA_PATH=\"\" %command%"
+    } else {
+        ""
+    };
+
     let new_shortcut = Shortcut {
         app_name: game_name,
         exe: executable.to_str().unwrap_or_default(),
         start_dir: executable.parent().and_then(|p| p.to_str()).unwrap_or_default(),
         icon: icon.and_then(|p| p.to_str()).unwrap_or_default(),
         shortcut_path: "",
-        launch_options: "",
+        launch_options,
         is_hidden: false,
         allow_desktop_config: true,
         allow_overlay: true,
@@ -72,4 +83,42 @@ fn find_shortcuts_vdf() -> Result<PathBuf> {
     }
 
     Err(anyhow!("Could not find shortcuts.vdf in {:?}", steam_dir))
+}
+
+fn check_steam_running() -> Result<()> {
+    let sys = System::new_all();
+   
+    let steam_running = sys.processes().values().any(|process| {
+        let name = process.name().to_string_lossy().to_lowercase();
+        name.contains("steam") && !name.contains("steamwebhelper")
+    });
+
+    if steam_running {
+        println!("\n{} Steam is currently running.", "⚠".yellow().bold());
+        println!("  Steam must be closed to safely modify Non-Steam game shortcuts.");
+        println!("  This ensures your shortcuts are saved correctly.\n");
+        println!("  Please close Steam and press Enter to continue...");
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)
+            .context("Failed to read input")?;
+
+        // Check again after user confirms
+        let sys = System::new_all();
+        let still_running = sys.processes().values().any(|process| {
+            let name = process.name().to_string_lossy().to_lowercase();
+            name.contains("steam") && !name.contains("steamwebhelper")
+        });
+
+        if still_running {
+            return Err(anyhow!(
+                "{} Steam is still running. Please close Steam completely and try again.",
+                "✖".red()
+            ));
+        }
+
+        println!("{} Steam has been closed. Continuing...\n", "✔".green());
+    }
+
+    Ok(())
 }

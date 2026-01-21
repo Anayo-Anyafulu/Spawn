@@ -1,1 +1,24 @@
+# Rust build artifacts
 /target
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files and directories
+/y
+
+# Temporary files
+*.tmp
+*.bak
+
+# Personal installation guides (user-specific)
+INSTALL_*.md
