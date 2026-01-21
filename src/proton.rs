@@ -101,7 +101,7 @@ pub fn check_proton_available() -> bool {
 pub fn get_proton_executable(proton_dir: &Path) -> Result<PathBuf> {
     let proton_exe = proton_dir.join("proton");
     
-    if !proton_exe.exists() {
+    if !is_flatpak_steam() && !proton_exe.exists() {
         return Err(anyhow!(
             "Proton executable not found at {:?}",
             proton_exe
