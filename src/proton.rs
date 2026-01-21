@@ -110,3 +110,15 @@ pub fn get_proton_executable(proton_dir: &Path) -> Result<PathBuf> {
     
     Ok(proton_exe)
 }
+
+/// Check if Steam is installed via Flatpak
+pub fn is_flatpak_steam() -> bool {
+    // Check if the Steam directory is in the Flatpak location
+    let home = match dirs_next::home_dir() {
+        Some(h) => h,
+        None => return false,
+    };
+    
+    let flatpak_steam = home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam");
+    flatpak_steam.exists()
+}

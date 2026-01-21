@@ -4,7 +4,7 @@ use std::process::Command;
 use std::fs;
 use colored::*;
 
-use crate::proton::{find_proton, get_proton_executable};
+use crate::proton::{find_proton, get_proton_executable, is_flatpak_steam};
 
 /// Install a Windows game using Proton
 pub fn install_windows_game(installer_path: &Path, install_dir: &Path, game_name: &str) -> Result<PathBuf> {
@@ -12,7 +12,7 @@ pub fn install_windows_game(installer_path: &Path, install_dir: &Path, game_name
     
     // Find Proton
     let proton_dir = find_proton()?;
-    let proton_exe = get_proton_executable(&proton_dir)?;
+    let _proton_exe = get_proton_executable(&proton_dir)?;
     
     // Create game directory
     let game_dir = install_dir.join(game_name.replace(' ', "_"));
@@ -28,14 +28,37 @@ pub fn install_windows_game(installer_path: &Path, install_dir: &Path, game_name
     // Set up Wine prefix for this game
     let wine_prefix = game_dir.join(".wine");
     
-    // Run the installer with Proton
-    let status = Command::new(proton_exe)
-        .arg("run")
-        .arg(installer_path)
-        .env("WINEPREFIX", &wine_prefix)
-        .env("STEAM_COMPAT_DATA_PATH", &wine_prefix)
-        .status()
-        .context("Failed to run installer with Proton")?;
+    // Check if Steam is Flatpak
+    let is_flatpak = is_flatpak_steam();
+    
+    let status = if is_flatpak {
+        println!("{} Detected Flatpak Steam - using flatpak run", "▶".cyan());
+        
+        // For Flatpak Steam, we need to run the installer through flatpak
+        Command::new("flatpak")
+            .arg("run")
+            .arg("--command=sh")
+            .arg("com.valvesoftware.Steam")
+            .arg("-c")
+            .arg(format!(
+                "WINEPREFIX='{}' STEAM_COMPAT_DATA_PATH='{}' ~/.local/share/Steam/steamapps/common/*/proton run '{}'",
+                wine_prefix.display(),
+                wine_prefix.display(),
+                installer_path.display()
+            ))
+            .status()
+            .context("Failed to run installer with Proton via Flatpak")?
+    } else {
+        // For native Steam, run Proton directly
+        let proton_exe = get_proton_executable(&proton_dir)?;
+        Command::new(proton_exe)
+            .arg("run")
+            .arg(installer_path)
+            .env("WINEPREFIX", &wine_prefix)
+            .env("STEAM_COMPAT_DATA_PATH", &wine_prefix)
+            .status()
+            .context("Failed to run installer with Proton")?
+    };
     
     if !status.success() {
         return Err(anyhow!(
