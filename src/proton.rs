@@ -19,7 +19,7 @@ pub fn find_proton() -> Result<PathBuf> {
         ));
     }
 
-    // Find the most recent Proton version
+    // Find the most recent Proton version that isn't empty
     let entries = fs::read_dir(&compatibilitytools_dir)
         .context("Failed to read Steam common directory")?;
     
@@ -32,18 +32,21 @@ pub fn find_proton() -> Result<PathBuf> {
                 .unwrap_or("");
             
             if name.starts_with("Proton") {
-                proton_versions.push(path);
+                // Check if directory is not empty (contains at least one file/folder other than . and ..)
+                if let Ok(mut sub_entries) = fs::read_dir(&path) {
+                    if sub_entries.next().is_some() {
+                        proton_versions.push(path);
+                    }
+                }
             }
         }
     }
 
     if proton_versions.is_empty() {
         return Err(anyhow!(
-            "No Proton installation found in {:?}\n\
-            Please install Proton through Steam:\n\
-            1. Open Steam\n\
-            2. Go to Library > Tools\n\
-            3. Install 'Proton Experimental' or latest Proton version",
+            "No valid Proton installation found in {:?}\n\
+            (Found some Proton directories but they appear to be empty)\n\
+            Please install or repair Proton through Steam.",
             compatibilitytools_dir
         ));
     }

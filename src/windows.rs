@@ -34,17 +34,27 @@ pub fn install_windows_game(installer_path: &Path, install_dir: &Path, game_name
     let status = if is_flatpak {
         println!("{} Detected Flatpak Steam - using flatpak run", "▶".cyan());
         
+        // Map the host path to the internal path if possible
+        let internal_path = if let Some(home_path) = dirs_next::home_dir() {
+            let home_str = home_path.to_string_lossy().to_string();
+            installer_path.to_string_lossy().replace(&home_str, "~")
+        } else {
+            installer_path.display().to_string()
+        };
+
         // For Flatpak Steam, we need to run the installer through flatpak
+        // We add --filesystem=home to ensure the sandbox can see the installer and the prefix
         Command::new("flatpak")
             .arg("run")
+            .arg("--filesystem=home")
             .arg("--command=sh")
             .arg("com.valvesoftware.Steam")
             .arg("-c")
             .arg(format!(
-                "WINEPREFIX='{}' STEAM_COMPAT_DATA_PATH='{}' ~/.local/share/Steam/steamapps/common/*/proton run '{}'",
+                "WINEPREFIX='{}' STEAM_COMPAT_DATA_PATH='{}' ~/.local/share/Steam/steamapps/common/*/proton run \"{}\"",
                 wine_prefix.display(),
                 wine_prefix.display(),
-                installer_path.display()
+                internal_path
             ))
             .status()
             .context("Failed to run installer with Proton via Flatpak")?
