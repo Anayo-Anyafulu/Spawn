@@ -43,7 +43,8 @@ pub fn install_windows_game(installer_path: &Path, install_dir: &Path, game_name
         };
 
         // For Flatpak Steam, we need to run the installer through flatpak
-        // We add --filesystem=home to ensure the sandbox can see the installer and the prefix
+        // We use a shell script snippet to find the proton binary inside the sandbox
+        // and add --filesystem=home to ensure it can see the installer and prefix.
         Command::new("flatpak")
             .arg("run")
             .arg("--filesystem=home")
@@ -51,7 +52,11 @@ pub fn install_windows_game(installer_path: &Path, install_dir: &Path, game_name
             .arg("com.valvesoftware.Steam")
             .arg("-c")
             .arg(format!(
-                "WINEPREFIX='{}' STEAM_COMPAT_DATA_PATH='{}' ~/.local/share/Steam/steamapps/common/*/proton run \"{}\"",
+                "PROTON_EXE=$(find ~/.local/share/Steam/steamapps/common -name proton -type f | head -n 1); \
+                 if [ -z \"$PROTON_EXE\" ]; then \
+                   echo 'Error: Proton binary not found inside Steam sandbox'; exit 1; \
+                 fi; \
+                 WINEPREFIX='{}' STEAM_COMPAT_DATA_PATH='{}' \"$PROTON_EXE\" run \"{}\"",
                 wine_prefix.display(),
                 wine_prefix.display(),
                 internal_path
