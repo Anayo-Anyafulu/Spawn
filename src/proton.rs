@@ -62,14 +62,22 @@ pub fn find_steam_dir() -> Result<PathBuf> {
     let home = dirs_next::home_dir()
         .ok_or_else(|| anyhow!("Could not determine home directory"))?;
     
-    // Check common Steam locations
+    // Check common Steam locations (in order of preference)
     let candidates = vec![
-        home.join(".steam/steam"),
-        home.join(".local/share/Steam"),
+        home.join(".local/share/Steam"),        // Native install & Flatpak target
+        home.join(".steam/steam"),              // Symlink (follow it)
+        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"), // Flatpak
     ];
     
     for candidate in candidates {
-        if candidate.exists() {
+        // Follow symlinks with canonicalize
+        if let Ok(canonical) = candidate.canonicalize() {
+            if canonical.exists() && canonical.join("steamapps").exists() {
+                return Ok(canonical);
+            }
+        }
+        // Also check without canonicalize in case it's a direct path
+        if candidate.exists() && candidate.join("steamapps").exists() {
             return Ok(candidate);
         }
     }
