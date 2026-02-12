@@ -6,7 +6,7 @@ use std::fs;
 pub fn discover_executable(game_dir: &Path) -> Result<PathBuf> {
     let mut candidates = Vec::new();
 
-    for entry in WalkDir::new(game_dir).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(game_dir).max_depth(6).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() {
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -40,17 +40,30 @@ pub fn discover_executable(game_dir: &Path) -> Result<PathBuf> {
 
 pub fn discover_icon(game_dir: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
+    let game_name_lower = game_dir.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
-    for entry in WalkDir::new(game_dir).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(game_dir).max_depth(5).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() {
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
             if file_name.ends_with(".png") || file_name.ends_with(".svg") || file_name.ends_with(".ico") {
-                let score = if file_name.contains("icon") || file_name.contains("logo") {
-                    10
-                } else {
-                    1
-                };
+                let mut score = 1;
+                
+                if file_name.contains("icon") || file_name.contains("logo") {
+                    score += 10;
+                }
+                
+                if !game_name_lower.is_empty() && file_name.contains(&game_name_lower) {
+                    score += 20;
+                }
+
+                // Favor files in the same directory as the game dir or exe
+                let depth = entry.depth();
+                score -= depth as i32;
+
                 candidates.push((score, path.to_path_buf()));
             }
         }

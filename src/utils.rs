@@ -30,6 +30,8 @@ pub fn set_executable_permission(executable: &Path) -> Result<()> {
     Ok(())
 }
 
+use dialoguer::{FuzzySelect, theme::ColorfulTheme};
+
 pub fn resolve_fuzzy_path(input: &Path, search_dir: &Path) -> Result<PathBuf> {
     if input.exists() {
         return Ok(input.to_path_buf());
@@ -38,6 +40,8 @@ pub fn resolve_fuzzy_path(input: &Path, search_dir: &Path) -> Result<PathBuf> {
     let input_str = input.to_string_lossy().to_lowercase();
     
     let mut matches = Vec::new();
+
+    // Check search_dir
     if let Ok(entries) = fs::read_dir(search_dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -53,36 +57,45 @@ pub fn resolve_fuzzy_path(input: &Path, search_dir: &Path) -> Result<PathBuf> {
         }
     }
 
+    // Also check Games packed if it exists and we haven't found a single match yet
+    if matches.len() != 1 {
+        if let Some(home) = dirs_next::home_dir() {
+            let games_packed = home.join("Games packed");
+            if games_packed.exists() && games_packed != search_dir {
+                if let Ok(entries) = fs::read_dir(&games_packed) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+                        if file_name.contains(&input_str) && !matches.contains(&path) {
+                            matches.push(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     match matches.len() {
-        0 => Err(anyhow!("{} No file or directory found matching \"{}\" in {:?}", "✖".red(), input.display(), search_dir)),
+        0 => Err(anyhow!("{} No file or directory found matching \"{}\"\nHint: Use 'spawn' without arguments to see all available games", "✖".red(), input.display())),
         1 => {
             let matched = matches.remove(0);
-            println!("{} Found matching path in {:?}: {:?}", "✔".green(), search_dir.file_name().unwrap_or_default(), matched.file_name().unwrap_or_default());
+            println!("{} Found: {:?}", "✔".green(), matched.file_name().unwrap_or_default());
             Ok(matched)
         }
         _ => {
-            println!("{} Multiple matches found for \"{}\" in {:?}:", "▶".cyan(), input.display(), search_dir);
-            for (i, m) in matches.iter().enumerate() {
-                println!("  {}. {:?}", i + 1, m.file_name().unwrap_or_default());
+            let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!("Multiple matches for \"{}\". Pick one:", input.display()))
+                .items(&matches.iter().map(|m| m.file_name().unwrap().to_string_lossy()).collect::<Vec<_>>())
+                .default(0)
+                .interact_opt()?;
+
+            if let Some(index) = selection {
+                let matched = matches.remove(index);
+                println!("{} Selected: {:?}", "✔".green(), matched.file_name().unwrap_or_default());
+                Ok(matched)
+            } else {
+                Err(anyhow!("{} Selection cancelled", "✖".red()))
             }
-            println!("{} Please enter the number of the correct file (or press Enter to cancel):", "▶".cyan());
-
-            let mut choice = String::new();
-            std::io::stdin().read_line(&mut choice).context("Failed to read input")?;
-            let choice = choice.trim();
-
-            if choice.is_empty() {
-                return Err(anyhow!("{} Operation cancelled by user", "✖".red()));
-            }
-
-            let index: usize = choice.parse::<usize>().map_err(|_| anyhow!("{} Invalid selection", "✖".red()))?;
-            if index == 0 || index > matches.len() {
-                return Err(anyhow!("{} Selection out of range", "✖".red()));
-            }
-
-            let matched = matches.remove(index - 1);
-            println!("{} Selected: {:?}", "✔".green(), matched.file_name().unwrap_or_default());
-            Ok(matched)
         }
     }
 }

@@ -90,7 +90,7 @@ fn detect_file_type(path: &Path) -> Result<GameType> {
 fn detect_directory_type(path: &Path) -> Result<GameType> {
     // Check if directory contains Windows executables
     let has_windows_exe = walkdir::WalkDir::new(path)
-        .max_depth(3)
+        .max_depth(6)
         .into_iter()
         .filter_map(|e| e.ok())
         .any(|entry| {
@@ -108,7 +108,7 @@ fn detect_directory_type(path: &Path) -> Result<GameType> {
 
     // Check for ELF binaries (Linux)
     let has_linux_binary = walkdir::WalkDir::new(path)
-        .max_depth(3)
+        .max_depth(6)
         .into_iter()
         .filter_map(|e| e.ok())
         .any(|entry| {
